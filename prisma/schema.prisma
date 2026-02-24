@@ -10,25 +10,570 @@ generator client {
 // See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
 datasource db {
   provider = "sqlite"
-  url      = "file:dev.sqlite"
+  url      = env("DATABASE_URL")
 }
 
+// ============================================
+// AUTHENTICATION & TENANT
+// ============================================
+
 model Session {
-  id            String    @id
-  shop          String
-  state         String
-  isOnline      Boolean   @default(false)
-  scope         String?
-  expires       DateTime?
-  accessToken   String
-  userId        BigInt?
-  firstName     String?
-  lastName      String?
-  email         String?
-  accountOwner  Boolean   @default(false)
-  locale        String?
-  collaborator  Boolean?  @default(false)
-  emailVerified Boolean?  @default(false)
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
   refreshToken        String?
   refreshTokenExpires DateTime?
+}
+
+model Shop {
+  id                  String              @id @default(cuid())
+  shopifyDomain       String              @unique // myshop.myshopify.com
+  name                String
+  email               String?
+  currency            String              @default("USD")
+  timezone            String?
+  plan                String?             // Shopify plan (basic, professional, etc.)
+  country             String?
+  
+  // App Settings
+  isActive            Boolean             @default(true)
+  installedAt         DateTime            @default(now())
+  uninstalledAt       DateTime?
+  
+  // Relations
+  languages           ShopLanguage[]
+  markets             Market[]
+  subscription        ShopSubscription?
+  tokenWallet         TokenWallet?
+  resources           Resource[]
+  glossaries          Glossary[]
+  syncHistories       SyncHistory[]
+  webhookEvents       WebhookEvent[]
+  chatConversations   ChatConversation[]
+  
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  
+  @@index([shopifyDomain])
+}
+
+// ============================================
+// LANGUAGE & MARKET MANAGEMENT
+// ============================================
+
+model Language {
+  id                  String              @id @default(cuid())
+  code                String              @unique // en, vi, ja, fr, es
+  name                String              // English, Vietnamese, Japanese
+  nativeName          String              // English, Tiếng Việt, 日本語
+  isRTL               Boolean             @default(false) // Right-to-left (Arabic, Hebrew)
+  
+  // Relations
+  shopLanguages       ShopLanguage[]
+  translations        Translation[]
+  
+  createdAt           DateTime            @default(now())
+  
+  @@index([code])
+}
+
+model ShopLanguage {
+  id                  String              @id @default(cuid())
+  shop                Shop                @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  shopId              String
+  language            Language            @relation(fields: [languageId], references: [id], onDelete: Cascade)
+  languageId          String
+  
+  isDefault           Boolean             @default(false)
+  isPublished         Boolean             @default(false)
+  autoTranslate       Boolean             @default(false)
+  defaultEngine       TranslationEngine   @default(GOOGLE)
+  
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  
+  @@unique([shopId, languageId])
+  @@index([shopId])
+}
+
+model Market {
+  id                  String              @id @default(cuid())
+  shop                Shop                @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  shopId              String
+  
+  shopifyMarketId     String              // Shopify GraphQL Market ID
+  name                String              // North America, Europe, Asia Pacific
+  primary             Boolean             @default(false)
+  
+  // Currency & Language
+  currency            String              // USD, EUR, JPY
+  languageCode        String              // Primary language for this market
+  
+  // Regions
+  countries           Json                // Array of country codes ["US", "CA"]
+  
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  
+  @@unique([shopId, shopifyMarketId])
+  @@index([shopId])
+}
+
+// ============================================
+// BILLING & TOKENOMICS
+// ============================================
+
+model BillingPlan {
+  id                  String              @id @default(cuid())
+  name                String              @unique // Free, Basic, Professional, Enterprise
+  price               Float               // Monthly price in USD
+  interval            BillingInterval     @default(MONTHLY)
+  
+  // Limits
+  maxLanguages        Int                 @default(1)
+  maxProducts         Int                 @default(100)
+  googleTranslations  Int                 @default(10000) // Free quota per month
+  includesImageTrans  Boolean             @default(false)
+  includesGlossary    Boolean             @default(false)
+  
+  // Features
+  features            Json                // Array of feature names
+  
+  // Shopify Billing
+  shopifyPlanName     String?             // For appSubscriptionCreate
+  
+  subscriptions       ShopSubscription[]
+  
+  isActive            Boolean             @default(true)
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+}
+
+model ShopSubscription {
+  id                  String              @id @default(cuid())
+  shop                Shop                @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  shopId              String              @unique
+  plan                BillingPlan         @relation(fields: [planId], references: [id])
+  planId              String
+  
+  status              SubscriptionStatus  @default(PENDING)
+  
+  // Shopify Billing
+  shopifyChargeId     String?             @unique
+  confirmationUrl     String?
+  
+  currentPeriodStart  DateTime?
+  currentPeriodEnd    DateTime?
+  
+  cancelAt            DateTime?
+  canceledAt          DateTime?
+  
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  
+  @@index([shopId])
+  @@index([status])
+}
+
+model TokenWallet {
+  id                  String              @id @default(cuid())
+  shop                Shop                @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  shopId              String              @unique
+  
+  balance             Int                 @default(0) // Current token balance
+  totalPurchased      Int                 @default(0) // Lifetime purchased tokens
+  totalUsed           Int                 @default(0) // Lifetime used tokens
+  
+  transactions        TokenTransaction[]
+  
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  
+  @@index([shopId])
+}
+
+model TokenTransaction {
+  id                  String              @id @default(cuid())
+  wallet              TokenWallet         @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  walletId            String
+  
+  type                TokenTransactionType
+  amount              Int                 // Positive for purchase, negative for usage
+  balanceBefore       Int
+  balanceAfter        Int
+  
+  // For purchases
+  shopifyChargeId     String?
+  amountUsd           Float?              // Purchase amount in USD
+  
+  // For usage
+  engine              TranslationEngine?
+  resourceType        ResourceType?
+  resourceId          String?
+  
+  description         String?
+  metadata            Json?               // Additional data
+  
+  createdAt           DateTime            @default(now())
+  
+  @@index([walletId])
+  @@index([createdAt])
+}
+
+// ============================================
+// RESOURCE & TRANSLATION
+// ============================================
+
+model Resource {
+  id                  String              @id @default(cuid())
+  shop                Shop                @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  shopId              String
+  
+  type                ResourceType
+  shopifyId           String              // Shopify GraphQL ID (gid://...)
+  handle              String?             // URL handle
+  
+  // Content
+  title               String?
+  status              String?             // active, draft, archived
+  
+  // Sync Status
+  syncStatus          SyncStatus          @default(OUTDATED)
+  lastSyncedAt        DateTime?
+  shopifyUpdatedAt    DateTime?
+  
+  // Translation Status
+  translationStatus   TranslationStatus   @default(NOT_STARTED)
+  translatedCount     Int                 @default(0)
+  totalLanguages      Int                 @default(0)
+  
+  // Relations
+  fields              ResourceField[]
+  translations        Translation[]
+  jobs                TranslationJob[]
+  
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  
+  @@unique([shopId, type, shopifyId])
+  @@index([shopId, type])
+  @@index([syncStatus])
+  @@index([translationStatus])
+}
+
+model ResourceField {
+  id                  String              @id @default(cuid())
+  resource            Resource            @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  resourceId          String
+  
+  fieldName           String              // title, description, body_html, meta_title, meta_description
+  fieldPath           String?             // For nested fields: variants.0.title
+  originalValue       String
+  
+  translations        Translation[]
+  
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  
+  @@unique([resourceId, fieldName, fieldPath])
+  @@index([resourceId])
+}
+
+model Translation {
+  id                  String              @id @default(cuid())
+  resource            Resource            @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  resourceId          String
+  field               ResourceField       @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+  fieldId             String
+  language            Language            @relation(fields: [languageId], references: [id], onDelete: Cascade)
+  languageId          String
+  
+  translatedValue     String
+  engine              TranslationEngine
+  
+  status              TranslationStatus   @default(NOT_STARTED)
+  isPublished         Boolean             @default(false)
+  publishedAt         DateTime?
+  
+  // Quality & Review
+  needsReview         Boolean             @default(false)
+  isManualEdit        Boolean             @default(false)
+  
+  // Tokens
+  tokensUsed          Int                 @default(0)
+  
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  
+  @@unique([resourceId, fieldId, languageId])
+  @@index([resourceId])
+  @@index([languageId])
+  @@index([status])
+}
+
+model TranslationJob {
+  id                  String              @id @default(cuid())
+  resource            Resource            @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  resourceId          String
+  
+  targetLanguageCodes Json                // Array of language codes to translate to
+  engine              TranslationEngine
+  
+  status              JobStatus           @default(PENDING)
+  priority            Int                 @default(0)
+  
+  // Progress
+  totalFields         Int                 @default(0)
+  processedFields     Int                 @default(0)
+  failedFields        Int                 @default(0)
+  
+  // Timing
+  startedAt           DateTime?
+  completedAt         DateTime?
+  failedAt            DateTime?
+  
+  // Error handling
+  error               String?
+  retryCount          Int                 @default(0)
+  
+  // Bull queue
+  queueJobId          String?             // Bull job ID for tracking
+  
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  
+  @@index([resourceId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Glossary {
+  id                  String              @id @default(cuid())
+  shop                Shop                @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  shopId              String
+  
+  term                String              // Original term (e.g., "Nike", "iPhone")
+  translation         String?             // Custom translation (if provided)
+  languageCode        String?             // Specific language (null = all languages)
+  
+  rule                GlossaryRule        @default(DO_NOT_TRANSLATE)
+  caseSensitive       Boolean             @default(true)
+  
+  isActive            Boolean             @default(true)
+  
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  
+  @@unique([shopId, term, languageCode])
+  @@index([shopId])
+}
+
+// ============================================
+// SYNC & WEBHOOKS
+// ============================================
+
+model SyncHistory {
+  id                  String              @id @default(cuid())
+  shop                Shop                @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  shopId              String
+  
+  resourceType        ResourceType
+  operation           SyncOperation       @default(FULL_SYNC)
+  
+  status              JobStatus           @default(PENDING)
+  
+  // Progress
+  totalItems          Int                 @default(0)
+  processedItems      Int                 @default(0)
+  failedItems         Int                 @default(0)
+  newItems            Int                 @default(0)
+  updatedItems        Int                 @default(0)
+  
+  // Timing
+  startedAt           DateTime?
+  completedAt         DateTime?
+  failedAt            DateTime?
+  duration            Int?                // Milliseconds
+  
+  error               String?
+  
+  createdAt           DateTime            @default(now())
+  
+  @@index([shopId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model WebhookEvent {
+  id                  String              @id @default(cuid())
+  shop                Shop                @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  shopId              String
+  
+  topic               String              // products/create, products/update
+  shopifyEventId      String?             @unique
+  
+  payload             Json
+  
+  processed           Boolean             @default(false)
+  processedAt         DateTime?
+  
+  error               String?
+  retryCount          Int                 @default(0)
+  
+  createdAt           DateTime            @default(now())
+  
+  @@index([shopId])
+  @@index([processed])
+  @@index([topic])
+  @@index([createdAt])
+}
+
+// ============================================
+// AI CHAT INTERFACE
+// ============================================
+
+model ChatConversation {
+  id                  String              @id @default(cuid())
+  shop                Shop                @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  shopId              String
+  
+  title               String?             // Auto-generated or user-provided
+  
+  messages            ChatMessage[]
+  
+  isActive            Boolean             @default(true)
+  
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  
+  @@index([shopId])
+  @@index([createdAt])
+}
+
+model ChatMessage {
+  id                  String              @id @default(cuid())
+  conversation        ChatConversation    @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversationId      String
+  
+  role                MessageRole         // USER, ASSISTANT, SYSTEM
+  content             String
+  
+  // Intent Detection (for user messages)
+  intent              ChatIntent?
+  intentConfidence    Float?              // 0.0 - 1.0
+  extractedParams     Json?
+  
+  // Action Execution (for assistant messages)
+  actionExecuted      String?             // sync_products, translate_collection, etc.
+  actionResult        Json?
+  
+  createdAt           DateTime            @default(now())
+  
+  @@index([conversationId])
+  @@index([createdAt])
+}
+
+// ============================================
+// ENUMS
+// ============================================
+
+enum TranslationEngine {
+  GOOGLE
+  OPENAI
+  GEMINI
+}
+
+enum ResourceType {
+  PRODUCT
+  COLLECTION
+  BLOG
+  ARTICLE
+  PAGE
+  THEME
+  SHOP_POLICY
+  METAOBJECT
+}
+
+enum SyncStatus {
+  SYNCED
+  OUTDATED
+  SYNCING
+  ERROR
+}
+
+enum TranslationStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+  PARTIALLY_COMPLETED
+  FAILED
+}
+
+enum JobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum BillingInterval {
+  MONTHLY
+  YEARLY
+  ONE_TIME
+}
+
+enum SubscriptionStatus {
+  PENDING
+  ACTIVE
+  CANCELLED
+  EXPIRED
+  TRIAL
+}
+
+enum TokenTransactionType {
+  PURCHASE
+  USAGE
+  REFUND
+  BONUS
+}
+
+enum GlossaryRule {
+  DO_NOT_TRANSLATE
+  CUSTOM_TRANSLATION
+}
+
+enum SyncOperation {
+  FULL_SYNC
+  INCREMENTAL_SYNC
+  SINGLE_ITEM
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+enum ChatIntent {
+  SYNC_RESOURCES
+  TRANSLATE_RESOURCES
+  UPDATE_CONFIG
+  VIEW_REPORT
+  MANAGE_GLOSSARY
+  MANAGE_BILLING
+  GENERAL_QUESTION
+  UNKNOWN
 }
