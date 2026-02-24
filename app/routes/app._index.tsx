@@ -50,9 +50,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     return redirect("/app/onboarding");
   }
 
-  // Shop has active subscription - redirect to dashboard
+  // Shop has active subscription - redirect to chat interface
   console.log(
-    `✅ Shop ${session.shop} fully configured - redirecting to dashboard`,
+    `✅ Shop ${session.shop} fully configured - redirecting to AI chat`,
   );
-  return redirect("/app/dashboard");
+  return redirect("/app/chat");
 };

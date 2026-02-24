@@ -2,7 +2,7 @@
 
 client_id = "e6200abaeadc253dab4d28ee71b3fdfb"
 name = "IconTrans"
-application_url = "https://example.com"
+application_url = "https://operational-inclusive-york-featured.trycloudflare.com"
 embedded = true
 
 [build]
@@ -22,10 +22,13 @@ api_version = "2026-04"
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "write_metaobject_definitions,write_metaobjects,write_products"
+scopes = "write_products,write_translations,read_locales,write_content,read_markets,write_metaobject_definitions,write_metaobjects"
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = [ 
+  "https://operational-inclusive-york-featured.trycloudflare.com/auth/callback",
+  "https://operational-inclusive-york-featured.trycloudflare.com/api/auth"
+]
 
 [product.metafields.app.demo_info]
 type = "single_line_text_field"

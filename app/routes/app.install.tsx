@@ -184,6 +184,41 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       console.log(`♻️ Cancelled old subscription for reinstalled shop`);
     }
 
+    // Auto-activate FREE plan
+    const freePlan = await prisma.billingPlan.findFirst({
+      where: { name: "Free" },
+    });
+
+    if (freePlan) {
+      // Create free subscription
+      await prisma.shopSubscription.upsert({
+        where: { shopId: shop.id },
+        create: {
+          shopId: shop.id,
+          planId: freePlan.id,
+          status: "ACTIVE",
+        },
+        update: {
+          planId: freePlan.id,
+          status: "ACTIVE",
+        },
+      });
+
+      // Create token wallet with initial balance
+      await prisma.tokenWallet.upsert({
+        where: { shopId: shop.id },
+        create: {
+          shopId: shop.id,
+          balance: 15000, // Free plan gets 15k tokens
+        },
+        update: {
+          balance: 15000,
+        },
+      });
+
+      console.log(`✅ Auto-activated Free plan for ${shop.name}`);
+    }
+
     // Return initialization status
     return Response.json({
       success: true,
@@ -192,7 +227,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         name: shop.name,
         primaryLanguage: primaryLanguageCode,
       },
-      hasSubscription: false, // Will redirect to onboarding
+      hasSubscription: true, // Free plan auto-activated
     });
   } catch (error) {
     console.error("❌ Shop initialization failed:", error);
@@ -253,9 +288,10 @@ export default function InstallPage() {
       });
     }, 800);
 
-    // After initialization completes (loader finishes), redirect to onboarding
+    // After initialization completes, auto-activate free plan and go to chat
     const redirectTimer = setTimeout(() => {
-      navigate("/app/onboarding");
+      // Skip onboarding, go directly to chat interface
+      navigate("/app/chat");
     }, 3000);
 
     return () => {
