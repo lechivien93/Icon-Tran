@@ -68,7 +68,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       pendingJobs,
     },
     recentSyncs,
-  });
+  };
 };
 
 export default function DashboardPage() {

@@ -204,4 +204,6 @@ export class ShopService extends BaseService {
   }
 }
 
-export default new ShopService();
+// Singleton instance
+export const shopService = new ShopService();
+export default shopService;

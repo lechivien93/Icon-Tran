@@ -71,7 +71,11 @@ export class BillingService extends BaseService {
     shopId: string,
     planId: string,
     shopifyAdmin: ShopifyAdminClient,
-  ): Promise<{ confirmationUrl: string; subscriptionId: string }> {
+  ): Promise<{
+    confirmationUrl?: string;
+    subscriptionId: string;
+    success: boolean;
+  }> {
     const plan = await this.db.billingPlan.findUnique({
       where: { id: planId },
     });
@@ -80,7 +84,44 @@ export class BillingService extends BaseService {
       throw new NotFoundError("Billing Plan", planId);
     }
 
-    // Create subscription in Shopify
+    // For Free plan (price = 0), create subscription directly without Shopify charge
+    if (plan.price === 0) {
+      const subscription = await this.db.shopSubscription.create({
+        data: {
+          shopId,
+          planId,
+          status: "ACTIVE",
+          currentPeriodStart: new Date(),
+          currentPeriodEnd: this.calculatePeriodEnd(new Date(), plan.interval),
+        },
+      });
+
+      // Create token wallet
+      const existingWallet = await this.db.tokenWallet.findUnique({
+        where: { shopId },
+      });
+
+      if (!existingWallet) {
+        await this.db.tokenWallet.create({
+          data: {
+            shopId,
+            balance: plan.googleTranslations, // Initial free tokens
+          },
+        });
+      }
+
+      this.log(
+        "info",
+        `Created FREE subscription ${subscription.id} for shop ${shopId}`,
+      );
+
+      return {
+        subscriptionId: subscription.id,
+        success: true,
+      };
+    }
+
+    // For paid plans, create subscription in Shopify
     const response = await shopifyAdmin.graphql(
       `#graphql
       mutation CreateSubscription($name: String!, $price: Decimal!, $returnUrl: String!) {
@@ -110,7 +151,7 @@ export class BillingService extends BaseService {
         variables: {
           name: plan.shopifyPlanName || plan.name,
           price: plan.price.toString(),
-          returnUrl: `${process.env.SHOPIFY_APP_URL}/api/billing/callback`,
+          returnUrl: `${process.env.SHOPIFY_APP_URL}/app/billing/callback`,
         },
       },
     );
@@ -138,12 +179,13 @@ export class BillingService extends BaseService {
 
     this.log(
       "info",
-      `Created subscription ${subscription.id} for shop ${shopId}`,
+      `Created PAID subscription ${subscription.id} for shop ${shopId}`,
     );
 
     return {
       confirmationUrl: subscriptionData.confirmationUrl,
       subscriptionId: subscription.id,
+      success: true,
     };
   }
 
